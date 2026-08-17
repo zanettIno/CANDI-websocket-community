@@ -1,6 +1,6 @@
 # Candi, o Diário do Câncer ft. Rede Feminina de SCS
 Este repositório contêm o código fonte para o módulo de comunicação em tempo real (WebSocket) do aplicativo mobile desenvolvido como produto principal na matéria de Projeto Integrador pelo grupo Candi, nas ETEC Jorge Street e FATEC São Caetano, para os anos de 2024-2026; e tem como objetivo principal preencher o vazio relacionado à complexidade, ou falta, da documentação particular e diária, sobre o câncer, além de incentivar uma maior participação da família e acompanhantes no tratamento oncológico.
-## O grupo CANDI é composto por:
+## O grupo Candi é composto por:
 - **Carolina Pichelli Souza :violin:**
 - **Fernando Alcantara D´Ávila :video_game:**
 - **Guilherme Xavier Zanetti :drum:**
