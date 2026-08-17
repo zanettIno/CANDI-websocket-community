@@ -52,18 +52,24 @@ CANDI-MVP-WEBSOCKET/
     ```bash
     git clone https://github.com/zanettIno/CANDI-websocket-community.git
     ```
-2. **Suba o backend com Docker Compose:**
+2. **Suba o DynamoDB com Docker Compose e o backend logo em seguida:**
     ```bash
     cd backend
     docker compose up
     npm run start:dev
     ```
-3. **Configure o IP local no app mobile:**
+
+3. **Configure os usuarios na raiz do projeto:**
+    ```bash
+    bash seed-demo-users.sh
+    ```
+    
+4. **Configure o IP local no app mobile:**
     ```bash
     # em mobile/src/config.js, atualize a variável API_BASE_URL
     # com o IP da sua máquina na rede local
     ```
-4. **Instale as dependências e rode o app mobile:**
+5. **Instale as dependências e rode o app mobile:**
     ```bash
     cd mobile
     npm install
