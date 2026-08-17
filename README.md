@@ -55,7 +55,8 @@ CANDI-MVP-WEBSOCKET/
 2. **Suba o backend com Docker Compose:**
     ```bash
     cd backend
-    docker-compose up
+    docker compose up
+    npm run start:dev
     ```
 3. **Configure o IP local no app mobile:**
     ```bash
