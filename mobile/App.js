@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable,
+  ActivityIndicator, FlatList, Image, KeyboardAvoidingView, Platform, Pressable,
   SafeAreaView, StatusBar, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -101,7 +101,7 @@ function Login({ email, setEmail, password, setPassword, error, onLogin }) {
   return <SafeAreaView style={styles.safe}>
     <StatusBar barStyle="dark-content" />
     <View style={styles.loginCard}>
-      <Text style={styles.logo}>CANDI</Text>
+      <Image source={require('./original.png')} style={styles.logo} resizeMode="contain" />
       <Text style={styles.title}>Comunidade em tempo real</Text>
       <Text style={styles.subtitle}>MVP de demonstração WebSocket</Text>
       <Field label="E-mail" value={email} onChangeText={setEmail} placeholder="eduardo@demo.candi" autoCapitalize="none" />
@@ -311,7 +311,7 @@ function Centered({ children }) { return <View style={styles.centered}>{children
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG }, centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: BG },
   loginCard: { margin: 24, marginTop: 70, padding: 26, backgroundColor: '#FFF', borderRadius: 28, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 20, elevation: 4 },
-  logo: { fontSize: 42, letterSpacing: 5, color: PINK, fontWeight: '300', textAlign: 'center', marginBottom: 18 }, title: { fontSize: 24, color: DARK, fontWeight: '700', textAlign: 'center' }, subtitle: { fontSize: 14, color: '#7B858B', textAlign: 'center', marginTop: 6, marginBottom: 26 },
+  logo: { width: 220, height: 56, alignSelf: 'center', marginBottom: 18 }, title: { fontSize: 24, color: DARK, fontWeight: '700', textAlign: 'center' }, subtitle: { fontSize: 14, color: '#7B858B', textAlign: 'center', marginTop: 6, marginBottom: 26 },
   fieldLabel: { color: DARK, fontWeight: '700', fontSize: 13, marginBottom: 6 }, field: { backgroundColor: '#F1F1F1', borderRadius: 14, paddingHorizontal: 15, paddingVertical: 13, color: DARK }, button: { backgroundColor: BLUE, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 8 }, buttonText: { color: '#FFF', fontWeight: '800', fontSize: 16 }, hint: { color: '#8B9499', textAlign: 'center', fontSize: 12, marginTop: 14 }, error: { color: '#B33A3A', marginBottom: 10, textAlign: 'center' },
   header: { paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#FFF', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#EEE' }, brand: { color: PINK, fontSize: 24, letterSpacing: 3, fontWeight: '500' }, headerSub: { color: DARK, fontSize: 12, marginTop: 2 }, link: { color: BLUE, fontWeight: '700' }, content: { flex: 1, padding: 20 }, greeting: { color: DARK, fontSize: 22, fontWeight: '800', marginBottom: 18 }, sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }, sectionTitle: { color: DARK, fontSize: 20, fontWeight: '800' }, sectionSub: { color: '#7B858B', marginTop: 4, marginBottom: 12 }, muted: { color: '#8A949A', marginBottom: 8 },
   conversationCard: { backgroundColor: '#FFF', borderRadius: 18, padding: 15, flexDirection: 'row', alignItems: 'center', marginBottom: 10, borderWidth: 1, borderColor: '#ECECEC' }, avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center', marginRight: 12 }, avatarText: { color: DARK, fontWeight: '800', fontSize: 18 }, personName: { color: DARK, fontWeight: '800', fontSize: 16 }, lastMessage: { color: '#7B858B', marginTop: 4 }, badge: { minWidth: 24, height: 24, borderRadius: 12, backgroundColor: PINK, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 }, badgeText: { color: '#FFF', fontWeight: '800' }, empty: { backgroundColor: '#FFF', borderRadius: 18, padding: 20, marginTop: 8, marginBottom: 8 }, emptyTitle: { fontSize: 17, fontWeight: '800', color: DARK }, emptyText: { color: '#7B858B', marginTop: 6, marginBottom: 6 }, smallButton: { backgroundColor: BLUE, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 }, smallButtonText: { color: '#FFF', fontWeight: '800' }, refreshButton: { alignItems: 'center', padding: 12 },
