@@ -1,0 +1,369 @@
+// src/chat/chat.service.ts
+import { Injectable, Inject, NotFoundException, UnauthorizedException, InternalServerErrorException, BadRequestException } from '@nestjs/common';
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, GetCommand, UpdateCommand, TransactWriteCommand, ScanCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { randomUUID } from 'crypto';
+
+interface AuthenticatedUser {
+  profile_id: string;
+  profile_email: string;
+  profile_name: string;
+  profile_nickname: string;
+}
+
+@Injectable()
+export class ChatService {
+  private readonly messagesTable = 'CANDIMessages';
+  private readonly conversationsTable = 'CANDIUserConversations';
+  private readonly profileTable = 'CANDIProfile';
+  private readonly groupsTable = 'CANDIGroups';
+
+  constructor(
+    @Inject('DYNAMO_CLIENT')
+    private readonly db: DynamoDBDocumentClient,
+  ) {}
+
+  private getConversationId(id1: string, id2: string): string {
+    return [id1, id2].sort().join('#');
+  }
+
+  private async getProfileById(profileId: string): Promise<any> {
+    const result = await this.db.send(
+      new GetCommand({
+        TableName: this.profileTable,
+        Key: { profile_id: profileId },
+      }),
+    );
+    if (!result.Item) {
+      throw new NotFoundException('Usuário não encontrado');
+    }
+    return result.Item;
+  }
+
+  /**
+   * Busca um perfil de usuário pelo email (usado para iniciar chat).
+   */
+  private async getProfileByEmail(email: string): Promise<any> {
+    const result = await this.db.send(
+      new ScanCommand({ 
+        TableName: this.profileTable,
+        FilterExpression: 'profile_email = :email',
+        ExpressionAttributeValues: { ':email': email },
+      }),
+    );
+    const user = result.Items?.[0];
+    if (!user) {
+      throw new NotFoundException('Usuário com este e-mail não foi encontrado');
+    }
+    return user;
+  }
+
+
+  /**
+   * Retorna o unread_count do OUTRO participante para indicar se leu ou não.
+   * unread_count = 0 para o outro => ele leu nossas mensagens.
+   */
+  async getReadStatus(myProfileId: string, conversationId: string): Promise<{
+    isRead: boolean;
+    isDelivered: boolean;
+    readUpTo: string | null;
+  }> {
+    if (conversationId.startsWith('GROUP#')) return { isRead: false, isDelivered: false, readUpTo: null };
+    const parts = conversationId.split('#');
+    const otherProfileId = parts.find(id => id !== myProfileId);
+    if (!otherProfileId) return { isRead: false, isDelivered: false, readUpTo: null };
+
+    const result = await this.db.send(new GetCommand({
+      TableName: this.conversationsTable,
+      Key: { profile_id: otherProfileId, conversation_id: conversationId },
+    }));
+
+    if (!result.Item) return { isRead: false, isDelivered: false, readUpTo: null };
+
+    const hasHistory = !!result.Item.last_message_timestamp;
+    const isDelivered = hasHistory;
+    // readUpTo: quando o outro usuario leu pela ultima vez
+    // Permite separar "mensagens lidas antes de readUpTo" de "novas mensagens nao lidas"
+    const readUpTo: string | null = result.Item.last_read_at ?? null;
+    // isRead = true apenas se readUpTo >= ultimo timestamp de mensagem
+    const isRead = isDelivered && !!readUpTo &&
+      readUpTo >= (result.Item.last_message_timestamp ?? '');
+
+    return { isRead, isDelivered, readUpTo };
+  }
+
+  /** Zera unread_count do usuário para esta conversa (chamado pelo ack_read no gateway) */
+  async zeroUnreadCount(profileId: string, conversationId: string) {
+    if (conversationId.startsWith('GROUP#')) return;
+    await this.db.send(new UpdateCommand({
+      TableName: this.conversationsTable,
+      Key: { profile_id: profileId, conversation_id: conversationId },
+      UpdateExpression: 'SET unread_count = :zero, last_read_at = :now',
+      ExpressionAttributeValues: { ':zero': 0, ':now': new Date().toISOString() },
+      ConditionExpression: 'attribute_exists(profile_id)',
+    })).catch(() => {});
+  }
+
+  async syncConversationDisplayName(profileId: string, displayName: string) {
+    const result = await this.db.send(new ScanCommand({
+      TableName: this.conversationsTable,
+      FilterExpression: 'other_user_id = :pid',
+      ExpressionAttributeValues: { ':pid': profileId },
+    }));
+
+    for (const item of result.Items || []) {
+      await this.db.send(new UpdateCommand({
+        TableName: this.conversationsTable,
+        Key: { profile_id: item.profile_id, conversation_id: item.conversation_id },
+        UpdateExpression: 'SET other_user_name = :name',
+        ExpressionAttributeValues: { ':name': displayName },
+      }));
+    }
+  }
+
+  async getInbox(profileId: string) {
+    const result = await this.db.send(
+      new QueryCommand({
+        TableName: this.conversationsTable,
+        IndexName: 'InboxSortGSI',
+        KeyConditionExpression: 'profile_id = :pid',
+        ExpressionAttributeValues: { ':pid': profileId },
+        ScanIndexForward: false,
+      }),
+    );
+    return result.Items || [];
+  }
+
+
+  async getMessages(profileId: string, conversationId: string) {
+    if (conversationId.startsWith('GROUP#')) {
+      await this.ensureGroupMember(profileId, conversationId);
+    } else {
+      await this.checkUserInConversation(profileId, conversationId);
+    }
+
+    const result = await this.db.send(
+      new QueryCommand({
+        TableName: this.messagesTable,
+        KeyConditionExpression: 'conversation_id = :cid',
+        ExpressionAttributeValues: { ':cid': conversationId },
+        ScanIndexForward: true,
+      }),
+    );
+    
+    // Zera contador de não lidas e grava last_read_at (não se aplica a chat de grupo)
+    if (!conversationId.startsWith('GROUP#')) {
+      const now = new Date().toISOString();
+      await this.db.send(new UpdateCommand({
+          TableName: this.conversationsTable,
+          Key: { profile_id: profileId, conversation_id: conversationId },
+          UpdateExpression: 'SET unread_count = :zero, last_read_at = :now',
+          ExpressionAttributeValues: { ':zero': 0, ':now': now },
+          ConditionExpression: 'attribute_exists(profile_id)'
+      })).catch(err => {
+        if (err.name !== 'ConditionalCheckFailedException') {
+          console.error("Erro ao zerar contador:", err);
+        }
+      });
+    }
+
+    return result.Items || [];
+  }
+
+  /**
+   * Função pública chamada pelo Controller para iniciar a conversa por EMAIL.
+   */
+  async findOrCreateConversationByEmail(user: AuthenticatedUser, otherUserEmail: string) {
+    // 1. Encontra o outro usuário pelo email
+    const otherUser = await this.getProfileByEmail(otherUserEmail);
+    
+    // 2. Chama a lógica de criação (função privada)
+    return this.findOrCreateConversationInternal(user, otherUser);
+  }
+
+  /**
+   * Lógica interna de criação/busca de conversa (marcada como privada).
+   */
+  private async findOrCreateConversationInternal(user: AuthenticatedUser, otherUser: any) {
+    const myProfileId = user.profile_id;
+    const otherProfileId = otherUser.profile_id;
+    const conversationId = this.getConversationId(myProfileId, otherProfileId);
+
+    // Tenta buscar a conversa para o usuário logado
+    const existing = await this.db.send(
+      new GetCommand({
+        TableName: this.conversationsTable,
+        Key: { profile_id: myProfileId, conversation_id: conversationId },
+      }),
+    );
+
+    if (existing.Item) {
+      return existing.Item; 
+    }
+    
+    const now = new Date().toISOString();
+
+    const myConversationEntry = {
+      profile_id: myProfileId,
+      conversation_id: conversationId,
+      other_user_id: otherProfileId,
+      other_user_name: otherUser.profile_nickname || otherUser.profile_name,
+      last_message: '',
+      last_message_timestamp: now,
+      unread_count: 0,
+    };
+    
+    const otherConversationEntry = {
+      profile_id: otherProfileId,
+      conversation_id: conversationId,
+      other_user_id: myProfileId,
+      other_user_name: user.profile_nickname || user.profile_name,
+      last_message: '',
+      last_message_timestamp: now,
+      unread_count: 0,
+    };
+
+    await this.db.send(new PutCommand({ TableName: this.conversationsTable, Item: myConversationEntry }));
+    await this.db.send(new PutCommand({ TableName: this.conversationsTable, Item: otherConversationEntry }));
+
+    return myConversationEntry;
+  }
+
+  async getUsers(currentProfileId: string) {
+    const result = await this.db.send(new ScanCommand({ TableName: this.profileTable }));
+    return (result.Items || [])
+      .filter((item: any) => item.profile_id !== currentProfileId)
+      .map((item: any) => ({
+        profile_id: item.profile_id,
+        profile_name: item.profile_name,
+        profile_nickname: item.profile_nickname,
+        profile_email: item.profile_email,
+      }))
+      .sort((a: any, b: any) => (a.profile_nickname || a.profile_name).localeCompare(b.profile_nickname || b.profile_name));
+  }
+
+  async createGroup(user: AuthenticatedUser, groupName: string, memberIds: string[]) {
+    const cleanName = String(groupName || '').trim();
+    const uniqueMembers = [...new Set([user.profile_id, ...(memberIds || [])].filter(Boolean))];
+
+    if (!cleanName) throw new BadRequestException('Nome do grupo é obrigatório');
+    if (uniqueMembers.length < 2) throw new BadRequestException('Selecione pelo menos um outro usuário');
+
+    const profiles = await Promise.all(uniqueMembers.map((id) => this.getProfileById(id)));
+    const groupId = `GROUP#${randomUUID()}`;
+    const now = new Date().toISOString();
+    const members = profiles.map((profile: any) => ({
+      profile_id: profile.profile_id,
+      name: profile.profile_nickname || profile.profile_name,
+      email: profile.profile_email,
+    }));
+
+    const group = {
+      group_id: groupId,
+      conversation_id: groupId,
+      group_name: cleanName,
+      created_by: user.profile_id,
+      created_at: now,
+      member_ids: uniqueMembers,
+      members,
+    };
+
+    await this.db.send(new PutCommand({ TableName: this.groupsTable, Item: group }));
+    return group;
+  }
+
+  async getGroups(profileId: string) {
+    const result = await this.db.send(new ScanCommand({ TableName: this.groupsTable }));
+    return (result.Items || [])
+      .filter((group: any) => Array.isArray(group.member_ids) && group.member_ids.includes(profileId))
+      .sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)));
+  }
+
+  async getGroup(profileId: string, groupId: string) {
+    const result = await this.db.send(new GetCommand({ TableName: this.groupsTable, Key: { group_id: groupId } }));
+    const group = result.Item as any;
+    if (!group || !group.member_ids?.includes(profileId)) {
+      throw new UnauthorizedException('Acesso negado a este grupo');
+    }
+    return group;
+  }
+
+  async ensureGroupMember(profileId: string, groupId: string) {
+    return this.getGroup(profileId, groupId);
+  }
+
+  async sendMessage(user: AuthenticatedUser, conversationId: string, messageContent: string) {
+    const { profile_id, profile_name, profile_nickname } = user;
+    const now = new Date().toISOString();
+
+    // Chat de grupo: valida membro e persiste a mensagem.
+    if (conversationId.startsWith('GROUP#')) {
+      await this.ensureGroupMember(profile_id, conversationId);
+      const newMessage = {
+        conversation_id: conversationId,
+        timestamp: `${now}#${randomUUID()}`,
+        sender_id: profile_id,
+        sender_name: profile_nickname || profile_name || (user.profile_email?.split('@')[0] ?? 'Usuário'),
+        message_content: messageContent,
+      };
+      await this.db.send(new PutCommand({ TableName: this.messagesTable, Item: newMessage }));
+      return newMessage;
+    }
+
+    const conversationEntry = await this.checkUserInConversation(profile_id, conversationId);
+    const otherProfileId = conversationEntry.other_user_id;
+
+    // 1. Nova Mensagem
+    const newMessage = {
+      conversation_id: conversationId,
+      timestamp: `${now}#${randomUUID()}`, // Chave de classificação única
+      sender_id: profile_id,
+      sender_name: profile_nickname || profile_name,
+      message_content: messageContent,
+    };
+
+    // 2. Atualização do Inbox do Remetente
+    const myInboxUpdate = {
+        TableName: this.conversationsTable,
+        Key: { profile_id: profile_id, conversation_id: conversationId },
+        UpdateExpression: 'SET last_message = :msg, last_message_timestamp = :ts',
+        ExpressionAttributeValues: { ':msg': messageContent, ':ts': now }
+    };
+    
+    // 3. Atualização do Inbox do Destinatário (+1 não lida)
+    const otherInboxUpdate = {
+        TableName: this.conversationsTable,
+        Key: { profile_id: otherProfileId, conversation_id: conversationId },
+        UpdateExpression: 'SET last_message = :msg, last_message_timestamp = :ts, unread_count = if_not_exists(unread_count, :init) + :inc', // Garante que o campo exista
+        ExpressionAttributeValues: { ':msg': messageContent, ':ts': now, ':inc': 1, ':init': 0 }
+    };
+
+    try {
+      await this.db.send(new TransactWriteCommand({
+        TransactItems: [
+          { Put: { TableName: this.messagesTable, Item: newMessage } },
+          { Update: myInboxUpdate },
+          { Update: otherInboxUpdate }
+        ]
+      }));
+      
+      return newMessage;
+    } catch (error) {
+        console.error("Erro na transação de envio de mensagem:", error);
+        throw new InternalServerErrorException('Não foi possível enviar a mensagem');
+    }
+  }
+
+  private async checkUserInConversation(profileId: string, conversationId: string) {
+    const result = await this.db.send(
+      new GetCommand({
+        TableName: this.conversationsTable,
+        Key: { profile_id: profileId, conversation_id: conversationId },
+      }),
+    );
+
+    if (!result.Item) {
+      throw new UnauthorizedException('Acesso negado a esta conversa');
+    }
+    return result.Item;
+  }
+}

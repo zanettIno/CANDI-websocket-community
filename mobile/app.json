@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Candi MVP WebSocket",
+    "slug": "candi-mvp-websocket",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "android": {
+      "package": "com.candi.mvp.websocket"
+    },
+    "ios": {
+      "bundleIdentifier": "com.candi.mvp.websocket"
+    }
+  }
+}
